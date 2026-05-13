@@ -26,6 +26,20 @@ type SampleTiming = {
   duration: number;
 };
 
+type MP4FileWithMovie = ReturnType<typeof createFile> & {
+  moov?: {
+    mvex?: {
+      mehd?: unknown;
+      add: (name: string) => {
+        set: (property: string, value: number) => unknown;
+      };
+    };
+    mvhd?: {
+      duration: number;
+    };
+  };
+};
+
 export function encode(
   width: number,
   height: number,
@@ -61,6 +75,7 @@ export function encode(
             default_sample_duration: defaultSampleDuration,
             avcDecoderConfigRecord: description,
           });
+          setFragmentDuration(outputFile, getScaledDuration(safeDuration));
         }
         const timing = sampleTimings[encodedFrameIndex];
         if (timing == null) {
@@ -156,6 +171,16 @@ function getScaledDuration(rawDuration: number) {
 
 function getScaledTimestamp(rawTimestamp: number) {
   return Math.round(rawTimestamp / (1_000_000 / TIMESCALE));
+}
+
+function setFragmentDuration(file: MP4FileWithMovie, duration: number) {
+  const outputFile = file as MP4FileWithMovie;
+  if (outputFile.moov?.mvhd != null) {
+    outputFile.moov.mvhd.duration = duration;
+  }
+  if (outputFile.moov?.mvex != null && outputFile.moov.mvex.mehd == null) {
+    outputFile.moov.mvex.add('mehd').set('fragment_duration', duration);
+  }
 }
 
 function roundToNearestEven(dim: number) {
