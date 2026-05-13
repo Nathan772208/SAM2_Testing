@@ -37,7 +37,29 @@ export type DecodedVideo = {
   frames: ImageFrame[];
   numFrames: number;
   fps: number;
+  duration: number;
 };
+
+function getPresentationDuration(track: MP4VideoTrack): number {
+  const editDuration = track.edits?.reduce(
+    (total, edit) => total + edit.segment_duration,
+    0,
+  );
+  if (editDuration != null && editDuration > 0 && track.movie_timescale > 0) {
+    return (editDuration * 1_000_000) / track.movie_timescale;
+  }
+
+  if (track.duration > 0 && track.timescale > 0) {
+    return (track.duration * 1_000_000) / track.timescale;
+  }
+
+  return 0;
+}
+
+function getPresentationFps(track: MP4VideoTrack, frameCount: number): number {
+  const duration = getPresentationDuration(track);
+  return duration > 0 ? frameCount / (duration / 1_000_000) : 30;
+}
 
 function decodeInternal(
   identifier: string,
@@ -141,9 +163,8 @@ function decodeInternal(
                 height: saveTrack.track_height,
                 frames: imageFrames,
                 numFrames: saveTrack.nb_samples,
-                fps:
-                  (saveTrack.nb_samples / saveTrack.duration) *
-                  saveTrack.timescale,
+                fps: getPresentationFps(saveTrack, saveTrack.nb_samples),
+                duration: getPresentationDuration(saveTrack),
               });
             }
           }
@@ -158,9 +179,8 @@ function decodeInternal(
               height: saveTrack.track_height,
               frames: imageFrames,
               numFrames: saveTrack.nb_samples,
-              fps:
-                (saveTrack.nb_samples / saveTrack.duration) *
-                saveTrack.timescale,
+              fps: getPresentationFps(saveTrack, imageFrames.length),
+              duration: getPresentationDuration(saveTrack),
             });
           }
         },

@@ -401,7 +401,7 @@ export default class VideoWorkerContext {
       this.width,
       this.height,
       decodedVideo.frames.length,
-      decodedVideo.fps,
+      decodedVideo.duration,
       this._framesGenerator(decodedVideo, canvas, form),
       progress => {
         this.sendResponse<EncodingStateUpdateResponse>('encodingStateUpdate', {
@@ -424,14 +424,15 @@ export default class VideoWorkerContext {
     form: CanvasForm,
   ): AsyncGenerator<ImageFrame, undefined> {
     const frames = decodedVideo.frames;
-    const fps = decodedVideo.fps || 30;
+    const frameCount = frames.length;
+    const fallbackDuration = (frameCount * 1_000_000) / (decodedVideo.fps || 30);
+    const duration = decodedVideo.duration > 0 ? decodedVideo.duration : fallbackDuration;
 
-    for (let frameIndex = 0; frameIndex < frames.length; ++frameIndex) {
+    for (let frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
       await this._drawFrameImpl(form, frameIndex, true);
 
-      const frame = frames[frameIndex];
-      const timestamp = Math.round((frameIndex * 1_000_000) / fps);
-      const nextTimestamp = Math.round(((frameIndex + 1) * 1_000_000) / fps);
+      const timestamp = Math.round((frameIndex * duration) / frameCount);
+      const nextTimestamp = Math.round(((frameIndex + 1) * duration) / frameCount);
       const videoFrame = new VideoFrame(canvas, {
         timestamp,
       });

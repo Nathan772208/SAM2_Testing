@@ -25,7 +25,7 @@ export function encode(
   width: number,
   height: number,
   numFrames: number,
-  fps: number,
+  duration: number,
   framesGenerator: AsyncGenerator<ImageFrame, unknown>,
   progressCallback?: (progress: number) => void,
 ): Promise<MP4ArrayBuffer> {
@@ -33,7 +33,8 @@ export function encode(
     let encodedFrameIndex = 0;
     let nextKeyFrameTimestamp = 0;
     let trackID: number | null = null;
-    const safeFps = fps > 0 ? fps : 30;
+    const safeDuration = duration > 0 ? duration : (numFrames * 1_000_000) / 30;
+    const defaultFrameDuration = safeDuration / Math.max(1, numFrames);
     const frameDurations = new Map<number, number>();
 
     const outputFile = createFile();
@@ -48,12 +49,10 @@ export function encode(
           trackID = outputFile.addTrack({
             width: width,
             height: height,
-            duration: getScaledDuration((numFrames * 1_000_000) / safeFps),
-            media_duration: getScaledDuration(
-              (numFrames * 1_000_000) / safeFps,
-            ),
+            duration: getScaledDuration(safeDuration),
+            media_duration: getScaledDuration(safeDuration),
             timescale: TIMESCALE,
-            default_sample_duration: getScaledDuration(1_000_000 / safeFps),
+            default_sample_duration: getScaledDuration(defaultFrameDuration),
             avcDecoderConfigRecord: description,
           });
         }
@@ -124,7 +123,6 @@ export function encode(
         frameDurations.set(timestamp, duration);
         let keyFrame = false;
         if (timestamp >= nextKeyFrameTimestamp) {
-          await encoder.flush();
           keyFrame = true;
           nextKeyFrameTimestamp = timestamp + SECONDS_PER_KEY_FRAME * 1e6;
         }
