@@ -23,6 +23,7 @@
     "jotai-immer": "^0.3.0",
     "localforage": "^1.10.0",
     "monaco-editor": "^0.48.0",
+    "mp4-muxer": "5.2.2",
     "mp4box": "^0.5.2",
     "pts": "^0.12.8",
     "react": "^18.2.0",

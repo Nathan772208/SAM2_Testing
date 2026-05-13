@@ -19,8 +19,6 @@ import {
   EncodingStateUpdateEvent,
 } from '@/common/components/video/VideoWorkerBridge';
 import useVideo from '@/common/components/video/editor/useVideo';
-import useReportError from '@/common/error/useReportError';
-import {VIDEO_API_ENDPOINT} from '@/demo/DemoConfig';
 import {MP4ArrayBuffer} from 'mp4box';
 import {useState} from 'react';
 
@@ -38,34 +36,28 @@ export default function useDownloadVideo(): State {
   const [progress, setProgress] = useState<number>(0);
 
   const video = useVideo();
-  const reportError = useReportError();
 
   async function download(shouldSave = true): Promise<MP4ArrayBuffer> {
-    return new Promise((resolve, reject) => {
+    return new Promise(resolve => {
       function onEncodingStateUpdate(event: EncodingStateUpdateEvent) {
         setDownloadingState('encoding');
         setProgress(event.progress);
       }
 
-      async function onEncodingComplete(event: EncodingCompletedEvent) {
-        try {
-          const file = await remuxVideo(event.file);
-          if (shouldSave) {
-            saveVideo(file, getFileName());
-          }
-          setDownloadingState('completed');
-          resolve(file);
-        } catch (error) {
-          setDownloadingState('default');
-          reportError(error);
-          reject(error);
-        } finally {
-          video?.removeEventListener('encodingCompleted', onEncodingComplete);
-          video?.removeEventListener(
-            'encodingStateUpdate',
-            onEncodingStateUpdate,
-          );
+      function onEncodingComplete(event: EncodingCompletedEvent) {
+        const file = event.file;
+
+        if (shouldSave) {
+          saveVideo(file, getFileName());
         }
+
+        video?.removeEventListener('encodingCompleted', onEncodingComplete);
+        video?.removeEventListener(
+          'encodingStateUpdate',
+          onEncodingStateUpdate,
+        );
+        setDownloadingState('completed');
+        resolve(file);
       }
 
       video?.addEventListener('encodingStateUpdate', onEncodingStateUpdate);
@@ -90,22 +82,6 @@ export default function useDownloadVideo(): State {
     a.setAttribute('target', '_self');
     a.click();
     setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-  }
-
-  async function remuxVideo(file: MP4ArrayBuffer): Promise<MP4ArrayBuffer> {
-    const response = await fetch(`${VIDEO_API_ENDPOINT}/remux_video`, {
-      body: new Blob([file], {type: 'video/mp4'}),
-      method: 'POST',
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Failed to remux video: ${response.status} ${errorText}`,
-      );
-    }
-    const buffer = (await response.arrayBuffer()) as MP4ArrayBuffer;
-    buffer.fileStart = 0;
-    return buffer;
   }
 
   return {download, progress, state: downloadingState};

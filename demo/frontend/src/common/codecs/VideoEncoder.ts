@@ -14,31 +14,12 @@
  * limitations under the License.
  */
 import {ImageFrame} from '@/common/codecs/VideoDecoder';
-import {MP4ArrayBuffer, createFile} from 'mp4box';
+import {ArrayBufferTarget, Muxer} from 'mp4-muxer';
+import {MP4ArrayBuffer} from 'mp4box';
 
 // The selection of timescale and seconds/key-frame value are
 // explained in the following docs: https://github.com/vjeux/mp4-h264-re-encode
-const TIMESCALE = 90000;
 const SECONDS_PER_KEY_FRAME = 2;
-
-type SampleTiming = {
-  dts: number;
-  duration: number;
-};
-
-type MP4FileWithMovie = ReturnType<typeof createFile> & {
-  moov?: {
-    mvex?: {
-      mehd?: unknown;
-      add: (name: string) => {
-        set: (property: string, value: number) => unknown;
-      };
-    };
-    mvhd?: {
-      duration: number;
-    };
-  };
-};
 
 export function encode(
   width: number,
@@ -51,52 +32,52 @@ export function encode(
   return new Promise((resolve, reject) => {
     let encodedFrameIndex = 0;
     let nextKeyFrameTimestamp = 0;
-    let trackID: number | null = null;
     const safeDuration = duration > 0 ? duration : (numFrames * 1_000_000) / 30;
-    const defaultFrameDuration = safeDuration / Math.max(1, numFrames);
-    const defaultSampleDuration = getScaledDuration(defaultFrameDuration);
-    const sampleTimings: SampleTiming[] = [];
+    const frameRate = numFrames / (safeDuration / 1_000_000);
+    const frameDurations = new Map<number, number>();
 
-    const outputFile = createFile();
+    const target = new ArrayBufferTarget();
+    const muxer = new Muxer({
+      target,
+      video: {
+        codec: 'avc',
+        width: roundToNearestEven(width),
+        height: roundToNearestEven(height),
+      },
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'strict',
+    });
 
     const encoder = new VideoEncoder({
       output(chunk, metaData) {
-        const uint8 = new Uint8Array(chunk.byteLength);
-        chunk.copyTo(uint8);
-
-        const description = metaData?.decoderConfig?.description;
-        if (trackID === null) {
-          trackID = outputFile.addTrack({
-            width: width,
-            height: height,
-            duration: getScaledDuration(safeDuration),
-            media_duration: getScaledDuration(safeDuration),
-            timescale: TIMESCALE,
-            default_sample_duration: defaultSampleDuration,
-            avcDecoderConfigRecord: description,
-          });
-          setFragmentDuration(outputFile, getScaledDuration(safeDuration));
-        }
-        const timing = sampleTimings[encodedFrameIndex];
-        if (timing == null) {
+        const duration = frameDurations.get(chunk.timestamp);
+        if (duration == null) {
           reject(
             new Error(
-              `Cannot find sample timing for encoded frame ${encodedFrameIndex}`,
+              `Cannot find duration for encoded frame timestamp ${chunk.timestamp}`,
             ),
           );
           return;
         }
-        outputFile.addSample(trackID, uint8, {
-          cts: timing.dts,
-          dts: timing.dts,
-          duration: timing.duration,
-          is_sync: chunk.type === 'key',
-        });
+        frameDurations.delete(chunk.timestamp);
+
+        const uint8 = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(uint8);
+        muxer.addVideoChunkRaw(
+          uint8,
+          chunk.type,
+          chunk.timestamp,
+          duration,
+          metaData,
+        );
         encodedFrameIndex++;
         progressCallback?.(encodedFrameIndex / numFrames);
 
         if (encodedFrameIndex === numFrames) {
-          resolve(outputFile.getBuffer());
+          muxer.finalize();
+          const buffer = target.buffer as MP4ArrayBuffer;
+          buffer.fileStart = 0;
+          resolve(buffer);
         }
       },
       error(error) {
@@ -126,7 +107,7 @@ export function encode(
         bitrate: 14_000_000,
         alpha: 'discard',
         bitrateMode: 'variable',
-        framerate: numFrames / (safeDuration / 1_000_000),
+        framerate: frameRate,
         latencyMode: 'realtime',
       };
       const supportedConfig =
@@ -141,13 +122,7 @@ export function encode(
 
       for await (const frame of framesGenerator) {
         const {bitmap, duration, timestamp} = frame;
-        sampleTimings.push({
-          // mp4box 0.5.2 treats a first DTS of 0 as unset because it checks
-          // the value as a boolean. Offset all DTS values by one sample; the
-          // writer subtracts the first DTS again when producing tfdt.
-          dts: getScaledTimestamp(timestamp) + defaultSampleDuration,
-          duration: getScaledDuration(duration),
-        });
+        frameDurations.set(timestamp, duration);
         let keyFrame = false;
         if (timestamp >= nextKeyFrameTimestamp) {
           keyFrame = true;
@@ -163,24 +138,6 @@ export function encode(
 
     setConfigurationAndEncodeFrames().catch(reject);
   });
-}
-
-function getScaledDuration(rawDuration: number) {
-  return Math.max(1, Math.round(rawDuration / (1_000_000 / TIMESCALE)));
-}
-
-function getScaledTimestamp(rawTimestamp: number) {
-  return Math.round(rawTimestamp / (1_000_000 / TIMESCALE));
-}
-
-function setFragmentDuration(file: MP4FileWithMovie, duration: number) {
-  const outputFile = file as MP4FileWithMovie;
-  if (outputFile.moov?.mvhd != null) {
-    outputFile.moov.mvhd.duration = duration;
-  }
-  if (outputFile.moov?.mvex != null && outputFile.moov.mvex.mehd == null) {
-    outputFile.moov.mvex.add('mehd').set('fragment_duration', duration);
-  }
 }
 
 function roundToNearestEven(dim: number) {
