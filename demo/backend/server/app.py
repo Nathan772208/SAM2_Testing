@@ -4,6 +4,10 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import os
+import shutil
+import subprocess
+import tempfile
 from typing import Any, Generator
 
 from app_conf import (
@@ -17,7 +21,14 @@ from app_conf import (
 from data.loader import preload_data
 from data.schema import schema
 from data.store import set_videos
-from flask import Flask, make_response, Request, request, Response, send_from_directory
+from flask import (
+    Flask,
+    make_response,
+    Request,
+    request,
+    Response,
+    send_from_directory,
+)
 from flask_cors import CORS
 from inference.data_types import PropagateDataResponse, PropagateInVideoRequest
 from inference.multipart import MultipartResponseBuilder
@@ -38,6 +49,48 @@ inference_api = InferenceAPI()
 @app.route("/healthy")
 def healthy() -> Response:
     return make_response("OK", 200)
+
+
+@app.route("/remux_video", methods=["POST"])
+def remux_video() -> Response:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return make_response("ffmpeg is not available", 500)
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        in_path = os.path.join(tempdir, "in.mp4")
+        out_path = os.path.join(tempdir, "out.mp4")
+
+        with open(in_path, "wb") as in_file:
+            in_file.write(request.get_data())
+
+        cmd = [
+            ffmpeg,
+            "-fflags",
+            "+genpts",
+            "-i",
+            in_path,
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "copy",
+            "-movflags",
+            "+faststart",
+            out_path,
+            "-y",
+        ]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error("ffmpeg remux failed: %s", result.stderr)
+            return make_response("failed to remux video", 500)
+
+        with open(out_path, "rb") as out_file:
+            return Response(out_file.read(), mimetype="video/mp4")
 
 
 @app.route(f"/{GALLERY_PREFIX}/<path:path>", methods=["GET"])

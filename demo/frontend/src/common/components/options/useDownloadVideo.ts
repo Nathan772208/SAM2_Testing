@@ -19,6 +19,8 @@ import {
   EncodingStateUpdateEvent,
 } from '@/common/components/video/VideoWorkerBridge';
 import useVideo from '@/common/components/video/editor/useVideo';
+import Logger from '@/common/logger/Logger';
+import {VIDEO_API_ENDPOINT} from '@/demo/DemoConfig';
 import {MP4ArrayBuffer} from 'mp4box';
 import {useState} from 'react';
 
@@ -44,8 +46,13 @@ export default function useDownloadVideo(): State {
         setProgress(event.progress);
       }
 
-      function onEncodingComplete(event: EncodingCompletedEvent) {
-        const file = event.file;
+      async function onEncodingComplete(event: EncodingCompletedEvent) {
+        let file = event.file;
+        try {
+          file = await remuxVideo(file);
+        } catch (error) {
+          Logger.warn('Falling back to browser-generated video', error);
+        }
 
         if (shouldSave) {
           saveVideo(file, getFileName());
@@ -72,7 +79,7 @@ export default function useDownloadVideo(): State {
   }
 
   function saveVideo(file: MP4ArrayBuffer, fileName: string) {
-    const blob = new Blob([file]);
+    const blob = new Blob([file], {type: 'video/mp4'});
     const url = window.URL.createObjectURL(blob);
 
     const a = document.createElement('a');
@@ -81,7 +88,20 @@ export default function useDownloadVideo(): State {
     a.setAttribute('download', fileName);
     a.setAttribute('target', '_self');
     a.click();
-    window.URL.revokeObjectURL(url);
+    setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+  }
+
+  async function remuxVideo(file: MP4ArrayBuffer): Promise<MP4ArrayBuffer> {
+    const response = await fetch(`${VIDEO_API_ENDPOINT}/remux_video`, {
+      body: new Blob([file], {type: 'video/mp4'}),
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to remux video: ${response.status}`);
+    }
+    const buffer = (await response.arrayBuffer()) as MP4ArrayBuffer;
+    buffer.fileStart = 0;
+    return buffer;
   }
 
   return {download, progress, state: downloadingState};
