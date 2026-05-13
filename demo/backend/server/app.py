@@ -104,8 +104,25 @@ def remux_video() -> Response:
 
 
 def _get_requested_fps() -> float:
+    default_fps = _get_default_export_fps()
+    requested_fps = request.headers.get("X-Video-FPS")
+    if requested_fps is None:
+        return default_fps
+
     try:
-        fps = float(request.headers.get("X-Video-FPS", "24"))
+        fps = float(requested_fps)
+    except ValueError:
+        return default_fps
+
+    if not math.isfinite(fps) or fps <= 0:
+        return default_fps
+
+    return min(fps, 120.0)
+
+
+def _get_default_export_fps() -> float:
+    try:
+        fps = float(os.environ.get("VIDEO_ENCODE_FPS", "24"))
     except ValueError:
         return 24.0
 
