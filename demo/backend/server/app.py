@@ -4,6 +4,11 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import math
+import os
+import shutil
+import subprocess
+import tempfile
 from typing import Any, Generator
 
 from app_conf import (
@@ -45,6 +50,82 @@ inference_api = InferenceAPI()
 @app.route("/healthy")
 def healthy() -> Response:
     return make_response("OK", 200)
+
+
+@app.route("/remux_video", methods=["POST"])
+def remux_video() -> Response:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return make_response("ffmpeg is not available", 500)
+
+    fps = _get_requested_fps()
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        in_path = os.path.join(tempdir, "in.mp4")
+        out_path = os.path.join(tempdir, "out.mp4")
+
+        with open(in_path, "wb") as in_file:
+            in_file.write(request.get_data())
+
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-fflags",
+            "+genpts",
+            "-r",
+            f"{fps:.6f}",
+            "-i",
+            in_path,
+            "-map",
+            "0:v:0",
+            "-an",
+            "-vf",
+            f"setpts=N/({fps:.6f}*TB),fps={fps:.6f}",
+            "-fps_mode",
+            "cfr",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-video_track_timescale",
+            "90000",
+            out_path,
+        ]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error("ffmpeg remux failed: %s", result.stderr)
+            return make_response("failed to remux video", 500)
+
+        with open(out_path, "rb") as out_file:
+            return Response(out_file.read(), mimetype="video/mp4")
+
+
+def _get_requested_fps() -> float:
+    default_fps = 24.0
+    requested_fps = request.headers.get("X-Video-FPS")
+    if requested_fps is None:
+        return default_fps
+
+    try:
+        fps = float(requested_fps)
+    except ValueError:
+        return default_fps
+
+    if not math.isfinite(fps) or fps <= 0:
+        return default_fps
+
+    return min(fps, 120.0)
 
 
 @app.route(f"/{GALLERY_PREFIX}/<path:path>", methods=["GET"])

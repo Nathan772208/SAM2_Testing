@@ -88,6 +88,7 @@ export type VideoRef = {
   getCanvas(): HTMLCanvasElement | null;
   get width(): number;
   get height(): number;
+  get fps(): number;
   get frame(): number;
   set frame(index: number);
   get numberOfFrames(): number;
@@ -168,7 +169,10 @@ export default forwardRef<VideoRef, Props>(function Video(
         return bridge.width;
       },
       get height() {
-        return bridge.width;
+        return bridge.height;
+      },
+      get fps() {
+        return bridge.fps;
       },
       get frame() {
         return bridge.frame;
