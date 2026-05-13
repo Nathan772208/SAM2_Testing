@@ -32,9 +32,17 @@ export function encode(
   return new Promise((resolve, reject) => {
     let encodedFrameIndex = 0;
     let nextKeyFrameTimestamp = 0;
+    let hasSettled = false;
     const safeDuration = duration > 0 ? duration : (numFrames * 1_000_000) / 30;
     const frameRate = numFrames / (safeDuration / 1_000_000);
     const frameDurations = new Map<number, number>();
+
+    function fail(error: unknown) {
+      if (!hasSettled) {
+        hasSettled = true;
+        reject(error);
+      }
+    }
 
     const target = new ArrayBufferTarget();
     const muxer = new Muxer({
@@ -52,7 +60,7 @@ export function encode(
       output(chunk, metaData) {
         const duration = frameDurations.get(chunk.timestamp);
         if (duration == null) {
-          reject(
+          fail(
             new Error(
               `Cannot find duration for encoded frame timestamp ${chunk.timestamp}`,
             ),
@@ -72,17 +80,9 @@ export function encode(
         );
         encodedFrameIndex++;
         progressCallback?.(encodedFrameIndex / numFrames);
-
-        if (encodedFrameIndex === numFrames) {
-          muxer.finalize();
-          const buffer = target.buffer as MP4ArrayBuffer;
-          buffer.fileStart = 0;
-          resolve(buffer);
-        }
       },
       error(error) {
-        reject(error);
-        return;
+        fail(error);
       },
     });
 
@@ -106,6 +106,7 @@ export function encode(
         height: roundToNearestEven(height),
         bitrate: 14_000_000,
         alpha: 'discard',
+        avc: {format: 'avc'},
         bitrateMode: 'variable',
         framerate: frameRate,
         latencyMode: 'realtime',
@@ -125,6 +126,7 @@ export function encode(
         frameDurations.set(timestamp, duration);
         let keyFrame = false;
         if (timestamp >= nextKeyFrameTimestamp) {
+          await encoder.flush();
           keyFrame = true;
           nextKeyFrameTimestamp = timestamp + SECONDS_PER_KEY_FRAME * 1e6;
         }
@@ -134,9 +136,21 @@ export function encode(
 
       await encoder.flush();
       encoder.close();
+
+      if (encodedFrameIndex !== numFrames) {
+        throw new Error(
+          `Encoded ${encodedFrameIndex} frames, expected ${numFrames}`,
+        );
+      }
+
+      muxer.finalize();
+      const buffer = target.buffer as MP4ArrayBuffer;
+      buffer.fileStart = 0;
+      hasSettled = true;
+      resolve(buffer);
     };
 
-    setConfigurationAndEncodeFrames().catch(reject);
+    setConfigurationAndEncodeFrames().catch(fail);
   });
 }
 
