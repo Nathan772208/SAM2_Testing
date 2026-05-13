@@ -425,15 +425,20 @@ export default class VideoWorkerContext {
   ): AsyncGenerator<ImageFrame, undefined> {
     const frames = decodedVideo.frames;
     const frameCount = frames.length;
-    const fallbackDuration = (frameCount * 1_000_000) / (decodedVideo.fps || 30);
-    const duration = decodedVideo.duration > 0 ? decodedVideo.duration : fallbackDuration;
+    const fallbackDuration =
+      (frameCount * 1_000_000) / (decodedVideo.fps || 30);
+    const duration =
+      decodedVideo.duration > 0 ? decodedVideo.duration : fallbackDuration;
 
     for (let frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
       await this._drawFrameImpl(form, frameIndex, true);
 
       const timestamp = Math.round((frameIndex * duration) / frameCount);
-      const nextTimestamp = Math.round(((frameIndex + 1) * duration) / frameCount);
+      const nextTimestamp = Math.round(
+        ((frameIndex + 1) * duration) / frameCount,
+      );
       const videoFrame = new VideoFrame(canvas, {
+        duration: nextTimestamp - timestamp,
         timestamp,
       });
 

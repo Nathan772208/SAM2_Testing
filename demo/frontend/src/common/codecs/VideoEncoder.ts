@@ -21,6 +21,11 @@ import {MP4ArrayBuffer, createFile} from 'mp4box';
 const TIMESCALE = 90000;
 const SECONDS_PER_KEY_FRAME = 2;
 
+type SampleTiming = {
+  dts: number;
+  duration: number;
+};
+
 export function encode(
   width: number,
   height: number,
@@ -35,7 +40,8 @@ export function encode(
     let trackID: number | null = null;
     const safeDuration = duration > 0 ? duration : (numFrames * 1_000_000) / 30;
     const defaultFrameDuration = safeDuration / Math.max(1, numFrames);
-    const frameDurations = new Map<number, number>();
+    const defaultSampleDuration = getScaledDuration(defaultFrameDuration);
+    const sampleTimings: SampleTiming[] = [];
 
     const outputFile = createFile();
 
@@ -52,24 +58,23 @@ export function encode(
             duration: getScaledDuration(safeDuration),
             media_duration: getScaledDuration(safeDuration),
             timescale: TIMESCALE,
-            default_sample_duration: getScaledDuration(defaultFrameDuration),
+            default_sample_duration: defaultSampleDuration,
             avcDecoderConfigRecord: description,
           });
         }
-        const duration = frameDurations.get(chunk.timestamp);
-        if (duration == null) {
+        const timing = sampleTimings[encodedFrameIndex];
+        if (timing == null) {
           reject(
             new Error(
-              `Cannot find duration for encoded frame timestamp ${chunk.timestamp}`,
+              `Cannot find sample timing for encoded frame ${encodedFrameIndex}`,
             ),
           );
           return;
         }
-        frameDurations.delete(chunk.timestamp);
         outputFile.addSample(trackID, uint8, {
-          cts: getScaledTimestamp(chunk.timestamp),
-          dts: getScaledTimestamp(chunk.timestamp),
-          duration: getScaledDuration(duration),
+          cts: timing.dts,
+          dts: timing.dts,
+          duration: timing.duration,
           is_sync: chunk.type === 'key',
         });
         encodedFrameIndex++;
@@ -106,6 +111,7 @@ export function encode(
         bitrate: 14_000_000,
         alpha: 'discard',
         bitrateMode: 'variable',
+        framerate: numFrames / (safeDuration / 1_000_000),
         latencyMode: 'realtime',
       };
       const supportedConfig =
@@ -120,7 +126,13 @@ export function encode(
 
       for await (const frame of framesGenerator) {
         const {bitmap, duration, timestamp} = frame;
-        frameDurations.set(timestamp, duration);
+        sampleTimings.push({
+          // mp4box 0.5.2 treats a first DTS of 0 as unset because it checks
+          // the value as a boolean. Offset all DTS values by one sample; the
+          // writer subtracts the first DTS again when producing tfdt.
+          dts: getScaledTimestamp(timestamp) + defaultSampleDuration,
+          duration: getScaledDuration(duration),
+        });
         let keyFrame = false;
         if (timestamp >= nextKeyFrameTimestamp) {
           keyFrame = true;

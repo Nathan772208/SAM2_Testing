@@ -57,8 +57,14 @@ function getPresentationDuration(track: MP4VideoTrack): number {
 }
 
 function getPresentationFps(track: MP4VideoTrack, frameCount: number): number {
-  const duration = getPresentationDuration(track);
-  return duration > 0 ? frameCount / (duration / 1_000_000) : 30;
+  if (track.duration > 0 && track.timescale > 0) {
+    return (frameCount / track.duration) * track.timescale;
+  }
+
+  const presentationDuration = getPresentationDuration(track);
+  return presentationDuration > 0
+    ? frameCount / (presentationDuration / 1_000_000)
+    : 30;
 }
 
 function decodeInternal(
