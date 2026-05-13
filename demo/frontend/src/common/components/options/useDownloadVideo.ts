@@ -49,7 +49,7 @@ export default function useDownloadVideo(): State {
       async function onEncodingComplete(event: EncodingCompletedEvent) {
         let file = event.file;
         try {
-          file = await remuxVideo(file);
+          file = await remuxVideo(file, video?.fps ?? 24);
         } catch (error) {
           Logger.warn('Falling back to browser-generated video', error);
         }
@@ -91,9 +91,16 @@ export default function useDownloadVideo(): State {
     setTimeout(() => window.URL.revokeObjectURL(url), 1000);
   }
 
-  async function remuxVideo(file: MP4ArrayBuffer): Promise<MP4ArrayBuffer> {
+  async function remuxVideo(
+    file: MP4ArrayBuffer,
+    fps: number,
+  ): Promise<MP4ArrayBuffer> {
+    const safeFps = fps > 0 ? fps : 24;
     const response = await fetch(`${VIDEO_API_ENDPOINT}/remux_video`, {
       body: new Blob([file], {type: 'video/mp4'}),
+      headers: {
+        'X-Video-FPS': safeFps.toString(),
+      },
       method: 'POST',
     });
     if (!response.ok) {

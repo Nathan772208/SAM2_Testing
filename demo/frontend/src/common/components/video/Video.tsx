@@ -91,6 +91,7 @@ export type VideoRef = {
   get frame(): number;
   set frame(index: number);
   get numberOfFrames(): number;
+  get fps(): number;
   play(): void;
   pause(): void;
   stop(): void;
@@ -178,6 +179,9 @@ export default forwardRef<VideoRef, Props>(function Video(
       },
       get numberOfFrames() {
         return bridge.numberOfFrames;
+      },
+      get fps() {
+        return bridge.fps;
       },
       play(): void {
         bridge.play();

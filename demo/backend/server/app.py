@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -57,6 +58,8 @@ def remux_video() -> Response:
     if ffmpeg is None:
         return make_response("ffmpeg is not available", 500)
 
+    fps = _get_requested_fps()
+
     with tempfile.TemporaryDirectory() as tempdir:
         in_path = os.path.join(tempdir, "in.mp4")
         out_path = os.path.join(tempdir, "out.mp4")
@@ -66,14 +69,21 @@ def remux_video() -> Response:
 
         cmd = [
             ffmpeg,
-            "-fflags",
-            "+genpts",
             "-i",
             in_path,
             "-map",
             "0:v:0",
+            "-vf",
+            f"setpts=N/({fps:.6f}*TB),fps={fps:.6f}",
+            "-an",
             "-c:v",
-            "copy",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
             "-movflags",
             "+faststart",
             out_path,
@@ -91,6 +101,18 @@ def remux_video() -> Response:
 
         with open(out_path, "rb") as out_file:
             return Response(out_file.read(), mimetype="video/mp4")
+
+
+def _get_requested_fps() -> float:
+    try:
+        fps = float(request.headers.get("X-Video-FPS", "24"))
+    except ValueError:
+        return 24.0
+
+    if not math.isfinite(fps) or fps <= 0:
+        return 24.0
+
+    return min(fps, 120.0)
 
 
 @app.route(f"/{GALLERY_PREFIX}/<path:path>", methods=["GET"])
